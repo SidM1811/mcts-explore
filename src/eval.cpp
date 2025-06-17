@@ -18,24 +18,6 @@ struct BitBoard {
     uint64_t board[NUM_SQUARES];
 };
 
-template <typename DataT, int M, int N>
-class ActivationsT {
-    public:
-    DataT data[M][N];
-};
-
-template <typename DataT, int M, int N>
-class LinearLayer {
-    public:
-    DataT weights[N][M];
-    DataT bias[N];
-
-    void forward(DataT input[M], DataT output[N]) {
-        matmul<DataT, N, M, M>(weights, input, output);
-        add<DataT, N, 1>(output, bias);
-    }
-};
-
 
 template <typename WeightT>
 class EvalState {

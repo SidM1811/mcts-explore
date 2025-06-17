@@ -5,21 +5,22 @@
 
 // Include the Game class header
 #include "game_dynamics/tictactoe.hpp"
+#include "game_dynamics/connect4.hpp"
+#include "batch_malloc.h"
 
 #define NUM_ROLLOUTS 100
 
-
 template <typename Game>
 class MCTSNode {
-    constexpr static double INF = 1.0;
+    constexpr static double INF = 1e6;
     public:
     using ActionT = typename Game::ActionT;
     using ActionIdxT = int;
     using RewardT = typename Game::RewardT;
     using PlayerType = typename Game::PlayerType;
 
-    MCTSNode* parent;
-    std::vector<MCTSNode*> children;
+    MCTSNode<Game>* parent;
+    std::vector<MCTSNode<Game>*> children;
     int n_visits;
     double Q;
     bool is_expanded;
@@ -32,13 +33,16 @@ class MCTSNode {
         for (int i = 0; i < num_rollouts; i++){
             Game rollout = game_state.copy();
             while (!rollout.is_terminal()){
-                int action_idx = rand() % rollout.num_actions;
+                ActionIdxT action_idx = random_policy(rollout);
                 rollout.step(action_idx);
             }
             total_reward += rollout.get_reward();
-            // std::cout << "Reward: " << total_reward[0] << " " << total_reward[1] << std::endl;
         }
         return total_reward / num_rollouts;
+    }
+
+    ActionIdxT random_policy(Game& game_state){
+        return rand() % game_state.num_actions;
     }
 
     MCTSNode(MCTSNode* parent){
@@ -46,6 +50,16 @@ class MCTSNode {
         this->n_visits = 0;
         this->Q = 0;
         this->is_expanded = false;
+        if(parent != nullptr){
+            this->player = parent->player;
+        }
+    }
+
+    void delete_rec(){
+        for (ActionIdxT i = 0; i < num_actions; i++){
+            if(children[i] != nullptr) children[i]->delete_rec();
+        }
+        delete this;
     }
 
     void make_root(){
@@ -80,11 +94,11 @@ class MCTSNode {
             // Select unexplored child - should be uniform but here deterministic
             for (ActionIdxT i = 0; i < num_actions; i++){
                 MCTSNode* child = children[i];
+                // If child is empty, set up data structure
                 if (child == nullptr){
                     children[i] = new MCTSNode(this);
                     child = children[i];
                 }
-                assert(child != nullptr);
                 if (child->n_visits == 0){
                     num_explored_actions++;
                     return std::make_pair(child, i);
@@ -94,13 +108,13 @@ class MCTSNode {
 
         // Select child with highest UCB - simple scan
         double best_uct = -INF;
-        MCTSNode* best_child = nullptr;
+        MCTSNode<Game>* best_child = nullptr;
         ActionIdxT best_action = -1;
         // Iterate over pairs of children and actions
         // The actions of the game state match with the MCTSNode children
         for (ActionIdxT i = 0; i < num_actions; i++){
-            MCTSNode* child = children[i];
-            double uct = child->Q / child->n_visits + sqrt(2 * log(n_visits) / child->n_visits);
+            MCTSNode<Game>* child = children[i];
+            double uct = child->Q + sqrt(2 * log(n_visits) / child->n_visits);
             if (uct > best_uct){
                 best_uct = uct;
                 best_child = child;
@@ -117,41 +131,72 @@ class MCTSNode {
         }
     }
 
+    void traverse(int num_iters, Game& game_state){
+        for (int i = 0; i < num_iters; i++){
+            MCTSNode<Game>* node = this;
+            Game state = game_state.copy();
+            while (node->is_expanded){
+                auto [child, action] = node->select_child();
+                state.step(action);
+                node = child;
+            }
+            RewardT reward = node->expand(state);
+            node->update_recursive(reward);
+        }
+    }
+
     void print(){
         std::cout << "Q: " << Q << std::endl;
         std::cout << "n_visits: " << n_visits << std::endl;
         std::cout << "num_actions: " << num_actions << std::endl;
         std::cout << "num_explored_actions: " << num_explored_actions << std::endl;
         std::cout << "is_expanded: " << is_expanded << std::endl;
-
-        // for (int i = 0; i < num_actions; i++){
-        //     if (children[i] != nullptr){
-        //         std::cout << "Child " << i << std::endl;
-        //         children[i]->print();
-        //     }
-        // }
     }
 };
 
 void run_sim(){
+    constexpr int BOARD_SIZE = 8;
+    using Game = Connect4<BOARD_SIZE>;
+    int MAX_PLY = BOARD_SIZE * BOARD_SIZE;
+
+    // using Game = TicTacToe;
+    // int MAX_PLY = 9;
+
+    Game game;
+    int num_iters = 10000;
+
+    for (int num_ply = 0; num_ply < MAX_PLY; num_ply++){
+        MCTSNode<Game>* root = new MCTSNode<Game>(nullptr);
+        root->player = game.player;
+        if(game.is_terminal()){
+            break;
+        }
+        std::cout << "Ply: " << num_ply << std::endl;
+        root->traverse(num_iters, game);
+        auto [best_child, best_action] = root->most_visited();
+        game.step(best_action);
+        std::cout << "Best action: " << best_action << std::endl;
+        best_child->print();
+        game.print();
+        root->delete_rec();
+    }
+}
+
+void play_game(){
     TicTacToe game;
     MCTSNode<TicTacToe>* root = new MCTSNode<TicTacToe>(nullptr);
     int num_iters = 1000;
 
-    for (int num_ply = 0; num_ply < 9; num_ply++){
+    for (int num_ply = 0; num_ply < 9; num_ply += 2){
         std::cout << "Ply: " << num_ply << std::endl;
-        for (int i = 0; i < num_iters; i++){
-            MCTSNode<TicTacToe>* node = root;
-            TicTacToe state = game.copy();
-            while (node->is_expanded){
-                auto [child, action] = node->select_child();
-                assert(child != nullptr);
-                state.step(action);
-                node = child;
-            }
-            auto reward = node->expand(state);
-            node->update_recursive(reward);
-        }
+
+        std::cout << "Enter your move" << std::endl;
+        game.print();
+        int action;
+        std::cin >> action;
+        game.step(action);
+        
+        root->traverse(num_iters, game);
         auto [best_child, best_action] = root->most_visited();
         game.step(best_action);
         best_child->make_root();
@@ -162,10 +207,7 @@ void run_sim(){
     }
 }
 
-void play_game(){
-    
-}
-
 int main(){
     run_sim();
+    // play_game();
 }
