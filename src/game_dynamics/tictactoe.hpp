@@ -38,8 +38,7 @@ public:
         num_actions = 9;
     }
 
-    TicTacToe copy(){
-        TicTacToe copy;
+    TicTacToe copy(TicTacToe& copy) {
         for (int i = 0; i < 3; i++) {
             for (int j = 0; j < 3; j++) {
                 copy.state[i][j] = this->state[i][j];

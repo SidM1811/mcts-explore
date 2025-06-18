@@ -27,7 +27,7 @@ public:
     int num_actions;
     int col_heights[BOARD_SIZE];
     ActionT action_map[BOARD_SIZE];
-    int last_row, last_col; // Track last move for optimization
+    int last_row[2], last_col[2]; // Track last move for optimization
 
     inline PlayerType get_next_player() {
         return PlayerType(player ^ 1);
@@ -51,8 +51,7 @@ public:
         num_actions = BOARD_SIZE;
     }
 
-    Connect4 copy(){     
-        Connect4 copy_game;   
+    Connect4 copy(Connect4& copy_game){     
         for (int i = 0; i < BOARD_SIZE; i++) {
             for (int j = 0; j < round_up(BOARD_SIZE, BOARD_REP_SIZE); j++) {
                 copy_game.state[Player0][i][j] = this->state[Player0][i][j];
@@ -65,14 +64,11 @@ public:
         // Copy other members
         copy_game.player = this->player;
         copy_game.num_actions = this->num_actions;
-        copy_game.last_row = this->last_row;
-        copy_game.last_col = this->last_col;
-        
+        for (int i = 0; i < 2; i++) {
+            copy_game.last_row[i] = this->last_row[i];
+            copy_game.last_col[i] = this->last_col[i];
+        }        
         return copy_game;
-    }
-
-    int get_num_actions() {
-        return num_actions;
     }
 
     // Mutates the object!!
@@ -81,68 +77,91 @@ public:
         int row = col_heights[col]++;
         state[player][col][row / BOARD_REP_SIZE] |= (static_cast<BoardRepT>(1) << (row % BOARD_REP_SIZE));
         
-        // If column is full, remove it from action_map efficiently
         if(col_heights[col] >= BOARD_SIZE){
-            // Swap with last element and reduce size - O(1) instead of O(n)
-            action_map[action_idx] = action_map[num_actions - 1];
+            if(action_idx != num_actions - 1){
+                action_map[action_idx] = action_map[num_actions - 1];
+            }
             num_actions--;
         }
         
-        last_row = row;
-        last_col = col;
+        last_row[player] = row;
+        last_col[player] = col;
         player = get_next_player();
     }
 
-    inline bool is_set(PlayerType player, int row, int col){
+    inline bool is_set(PlayerType player, int row, int col) const {
         return (
             state[player][col][row / BOARD_REP_SIZE] 
             >> (row % BOARD_REP_SIZE)
         ) & 1;
     }
 
-    bool is_winner(PlayerType check_player){
-        // Check all positions for 4-in-a-row in all directions
-        // if(last_row < 0 || last_col < 0 || last_row >= BOARD_SIZE || last_col >= BOARD_SIZE) {
-        //     return false; // Invalid last move
-        // }
-        for (int col = 0; col < BOARD_SIZE; col++) {
-            for (int row = 0; row < BOARD_SIZE; row++) {
-                if (is_set(check_player, row, col)) {
-                    // Check horizontal (right)
-                    if (col + 3 < BOARD_SIZE &&
-                        is_set(check_player, row, col + 1) &&
-                        is_set(check_player, row, col + 2) &&
-                        is_set(check_player, row, col + 3)) {
-                        return true;
-                    }
-                    
-                    // Check vertical (down)
-                    if (row + 3 < BOARD_SIZE &&
-                        is_set(check_player, row + 1, col) &&
-                        is_set(check_player, row + 2, col) &&
-                        is_set(check_player, row + 3, col)) {
-                        return true;
-                    }
-                    
-                    // Check diagonal (down-right)
-                    if (row + 3 < BOARD_SIZE && col + 3 < BOARD_SIZE &&
-                        is_set(check_player, row + 1, col + 1) &&
-                        is_set(check_player, row + 2, col + 2) &&
-                        is_set(check_player, row + 3, col + 3)) {
-                        return true;
-                    }
-                    
-                    // Check anti-diagonal (down-left)
-                    if (row + 3 < BOARD_SIZE && col - 3 >= 0 &&
-                        is_set(check_player, row + 1, col - 1) &&
-                        is_set(check_player, row + 2, col - 2) &&
-                        is_set(check_player, row + 3, col - 3)) {
-                        return true;
-                    }
+    bool is_winner_helper(PlayerType check_player, int row, int col){
+        if (!is_set(check_player, row, col)) {
+            return false;
+        }
+        
+        // Check horizontal - all possible 4-in-a-row that include this position
+        for (int start_col = std::max(0, col - 3); start_col <= std::min(col, BOARD_SIZE - 4); start_col++) {
+            if (is_set(check_player, row, start_col) &&
+                is_set(check_player, row, start_col + 1) &&
+                is_set(check_player, row, start_col + 2) &&
+                is_set(check_player, row, start_col + 3)) {
+                return true;
+            }
+        }
+        
+        // Check vertical - all possible 4-in-a-row that include this position
+        for (int start_row = std::max(0, row - 3); start_row <= std::min(row, BOARD_SIZE - 4); start_row++) {
+            if (is_set(check_player, start_row, col) &&
+                is_set(check_player, start_row + 1, col) &&
+                is_set(check_player, start_row + 2, col) &&
+                is_set(check_player, start_row + 3, col)) {
+                return true;
+            }
+        }
+        
+        // Check diagonal (top-left to bottom-right)
+        for (int i = -3; i <= 0; i++) {
+            int start_row = row + i;
+            int start_col = col + i;
+            if (start_row >= 0 && start_col >= 0 && 
+                start_row + 3 < BOARD_SIZE && start_col + 3 < BOARD_SIZE) {
+                if (is_set(check_player, start_row, start_col) &&
+                    is_set(check_player, start_row + 1, start_col + 1) &&
+                    is_set(check_player, start_row + 2, start_col + 2) &&
+                    is_set(check_player, start_row + 3, start_col + 3)) {
+                    return true;
                 }
             }
         }
+        
+        // Check anti-diagonal (top-right to bottom-left)
+        for (int i = -3; i <= 0; i++) {
+            int start_row = row + i;
+            int start_col = col - i;
+            if (start_row >= 0 && start_col < BOARD_SIZE && 
+                start_row + 3 < BOARD_SIZE && start_col - 3 >= 0) {
+                if (is_set(check_player, start_row, start_col) &&
+                    is_set(check_player, start_row + 1, start_col - 1) &&
+                    is_set(check_player, start_row + 2, start_col - 2) &&
+                    is_set(check_player, start_row + 3, start_col - 3)) {
+                    return true;
+                }
+            }
+        }
+        
         return false;
+    }
+
+    bool is_winner(PlayerType check_player){
+        // Check all positions for 4-in-a-row in all directions
+        int row = last_row[check_player];
+        int col = last_col[check_player];
+        if(row < 0 || col < 0 || row >= BOARD_SIZE || col >= BOARD_SIZE) {
+            return false; // Invalid last move
+        }
+        return is_winner_helper(check_player, row, col);
     }
 
     bool is_terminal(){
@@ -177,12 +196,54 @@ public:
             std::cout << std::endl;
         }
     }
+
+    void compact_print(){
+        for (int i = 0; i < BOARD_SIZE; i++) {
+            for (int j = 0; j < BOARD_SIZE; j++) {
+                if (is_set(Player0, i, j)){
+                    std::cout << "X";
+                } else if (is_set(Player1, i, j)){
+                    std::cout << "O";
+                } else {
+                    std::cout << ".";
+                }
+            }
+        }
+    }
+
+    void compact_print_to_csv(std::ofstream& file){
+        for (int i = 0; i < BOARD_SIZE; i++) {
+            for (int j = 0; j < BOARD_SIZE; j++) {
+                if (is_set(Player0, i, j)){
+                    file << "X";
+                } else if (is_set(Player1, i, j)){
+                    file << "O";
+                } else {
+                    file << ".";
+                }
+            }
+        }
+    }
 };
 
 template <int BOARD_SIZE>
 typename Connect4<BOARD_SIZE>::RewardT& operator +=(typename Connect4<BOARD_SIZE>::RewardT& lhs, const typename Connect4<BOARD_SIZE>::RewardT& rhs) {
     lhs[0] += rhs[0];
     lhs[1] += rhs[1];
+    return lhs;
+}
+
+template <int BOARD_SIZE>
+typename Connect4<BOARD_SIZE>::RewardT& operator -=(typename Connect4<BOARD_SIZE>::RewardT& lhs, const typename Connect4<BOARD_SIZE>::RewardT& rhs) {
+    lhs[0] -= rhs[0];
+    lhs[1] -= rhs[1];
+    return lhs;
+}
+
+template <int BOARD_SIZE>
+typename Connect4<BOARD_SIZE>::RewardT& operator *(typename Connect4<BOARD_SIZE>::RewardT& lhs, const typename Connect4<BOARD_SIZE>::RewardT& rhs) {
+    lhs[0] *= rhs[0];
+    lhs[1] *= rhs[1];
     return lhs;
 }
 

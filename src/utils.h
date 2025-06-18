@@ -5,7 +5,7 @@ class ActivationsT {
 };
 
 template <typename DataT, int M, int N>
-class LinearLayer {
+class Linear {
     public:
     DataT weights[N][M];
     DataT bias[N];

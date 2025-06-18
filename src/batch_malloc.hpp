@@ -1,13 +1,36 @@
-#include "batch_malloc.h"
+#ifndef BATCH_MALLOC_HPP
+#define BATCH_MALLOC_HPP
+
 #include <cstdlib>
+
+template<typename Obj>
+class Node{
+    public:
+    Obj object;
+    Node<Obj>* next;
+};
+
+template<typename Obj>
+class BatchMalloc{
+    private:
+    public:
+    Node<Obj>* head;
+    Node<Obj>* tail;
+    size_t capacity;
+
+    BatchMalloc<Obj>(size_t initial_request);
+    Node<Obj>* allocate(size_t request_size);
+    Obj* pop();
+    void push(Obj* obj);
+};
 
 // Constructor implementation
 template<typename Obj>
-BatchMalloc<Obj>::BatchMalloc() {
+BatchMalloc<Obj>::BatchMalloc(size_t initial_request) {
     head = nullptr;
     tail = nullptr;
     capacity = 0;
-    head = allocate(default_capacity);
+    head = allocate(initial_request);
 }
 
 // Allocate method implementation
@@ -39,5 +62,14 @@ Obj* BatchMalloc<Obj>::pop() {
     if (head == nullptr) {
         tail = nullptr;
     }
-    return &(node_to_pop->object);
+    return reinterpret_cast<Obj*>(node_to_pop);
 }
+
+template<typename Obj>
+void BatchMalloc<Obj>::push(Obj* obj) {
+    Node<Obj>* node = reinterpret_cast<Node<Obj>*>(obj);
+    node->next = head;
+    head = node;
+}
+
+#endif // BATCH_MALLOC_HPP

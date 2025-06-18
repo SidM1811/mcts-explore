@@ -2,13 +2,15 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <fstream>
 
 // Include the Game class header
 #include "game_dynamics/tictactoe.hpp"
 #include "game_dynamics/connect4.hpp"
-#include "batch_malloc.h"
+#include "batch_malloc.hpp"
+#include "game_net/connect4_hf.hpp"
 
-#define NUM_ROLLOUTS 100
+#define NUM_ROLLOUTS 10
 
 template <typename Game>
 class MCTSNode {
@@ -19,6 +21,8 @@ class MCTSNode {
     using RewardT = typename Game::RewardT;
     using PlayerType = typename Game::PlayerType;
 
+    using Net = HF_Net<8>;
+
     MCTSNode<Game>* parent;
     std::vector<MCTSNode<Game>*> children;
     int n_visits;
@@ -26,12 +30,34 @@ class MCTSNode {
     bool is_expanded;
     int num_actions, num_explored_actions;
     PlayerType player;
+
+    static BatchMalloc<MCTSNode<Game>>* allocator;
+    static Net* hf_net;
     
+    // Static method to get/initialize allocator
+    static BatchMalloc<MCTSNode<Game>>* get_allocator() {
+        if (allocator == nullptr) {
+            allocator = new BatchMalloc<MCTSNode<Game>>(100000);
+        }
+        return allocator;
+    }
+
+    static Net* get_hf_net() {
+        if (hf_net == nullptr) {
+            hf_net = new Net();
+        }
+        return hf_net;
+    }
+
+    RewardT net_rollout(Game& game_state){
+        return get_hf_net()->forward(game_state);
+    }
 
     RewardT random_rollouts(Game& game_state, int num_rollouts){
         RewardT total_reward = {0, 0};
+        Game rollout;
         for (int i = 0; i < num_rollouts; i++){
-            Game rollout = game_state.copy();
+            game_state.copy(rollout);
             while (!rollout.is_terminal()){
                 ActionIdxT action_idx = random_policy(rollout);
                 rollout.step(action_idx);
@@ -59,7 +85,7 @@ class MCTSNode {
         for (ActionIdxT i = 0; i < num_actions; i++){
             if(children[i] != nullptr) children[i]->delete_rec();
         }
-        delete this;
+        get_allocator()->push(reinterpret_cast<MCTSNode<Game>*>(this));
     }
 
     void make_root(){
@@ -73,7 +99,6 @@ class MCTSNode {
         player = game_state.get_prev_player();
         children.resize(num_actions, nullptr);
         RewardT reward = random_rollouts(game_state, NUM_ROLLOUTS);
-        Q = reward[player];
         return reward;
     }
 
@@ -89,6 +114,37 @@ class MCTSNode {
         return std::make_pair(children[best_action], best_action);
     }
 
+    std::pair<MCTSNode*, ActionIdxT> soft_select(){
+        std::vector<double> action_probs(num_actions, 0.0);
+        double sum_probs = 0.0;
+        double dirichlet_alpha = 0.3;
+
+        // Calculate softmax probabilities based on Q values
+        for (ActionIdxT i = 0; i < num_actions; i++){
+            MCTSNode* child = children[i];
+            if (child != nullptr){
+                action_probs[i] = child->n_visits + dirichlet_alpha;
+                sum_probs += action_probs[i];
+            }
+        }
+
+        // Normalize probabilities
+        for (ActionIdxT i = 0; i < num_actions; i++){
+            action_probs[i] /= sum_probs;
+        }
+
+        // Select action based on probabilities
+        double rand_val = static_cast<double>(rand()) / RAND_MAX;
+        double cumulative_prob = 0.0;
+        for (ActionIdxT i = 0; i < num_actions; i++){
+            cumulative_prob += action_probs[i];
+            if (rand_val < cumulative_prob){
+                return std::make_pair(children[i], i);
+            }
+        }
+        return std::make_pair(nullptr, -1); // Should not reach here
+    }
+
     std::pair<MCTSNode*, ActionIdxT> select_child(){
         if (num_explored_actions < num_actions){
             // Select unexplored child - should be uniform but here deterministic
@@ -96,7 +152,8 @@ class MCTSNode {
                 MCTSNode* child = children[i];
                 // If child is empty, set up data structure
                 if (child == nullptr){
-                    children[i] = new MCTSNode(this);
+                    children[i] = get_allocator()->pop();
+                    new (children[i]) MCTSNode<Game>(this);
                     child = children[i];
                 }
                 if (child->n_visits == 0){
@@ -132,14 +189,18 @@ class MCTSNode {
     }
 
     void traverse(int num_iters, Game& game_state){
+        Game state;
         for (int i = 0; i < num_iters; i++){
             MCTSNode<Game>* node = this;
-            Game state = game_state.copy();
+            game_state.copy(state);
             while (node->is_expanded){
                 auto [child, action] = node->select_child();
                 state.step(action);
                 node = child;
             }
+            // Init Q with neural network
+            node->Q = get_hf_net()->forward(state)[player];
+            node->n_visits = 1;
             RewardT reward = node->expand(state);
             node->update_recursive(reward);
         }
@@ -154,60 +215,75 @@ class MCTSNode {
     }
 };
 
+// Static member definitions
+template <typename Game>
+BatchMalloc<MCTSNode<Game>>* MCTSNode<Game>::allocator = nullptr;
+
+template <typename Game>
+typename MCTSNode<Game>::Net* MCTSNode<Game>::hf_net = nullptr;
+
 void run_sim(){
     constexpr int BOARD_SIZE = 8;
     using Game = Connect4<BOARD_SIZE>;
     int MAX_PLY = BOARD_SIZE * BOARD_SIZE;
 
-    // using Game = TicTacToe;
-    // int MAX_PLY = 9;
+    Game PV[MAX_PLY];
 
     Game game;
-    int num_iters = 10000;
-
-    for (int num_ply = 0; num_ply < MAX_PLY; num_ply++){
-        MCTSNode<Game>* root = new MCTSNode<Game>(nullptr);
+    int num_iters = 100000;
+    int num_ply = 0;
+    for (num_ply = 0; num_ply < MAX_PLY; num_ply++){
+        MCTSNode<Game>* root = MCTSNode<Game>::get_allocator()->pop();
+        new (root) MCTSNode<Game>(nullptr);
         root->player = game.player;
         if(game.is_terminal()){
             break;
         }
         std::cout << "Ply: " << num_ply << std::endl;
         root->traverse(num_iters, game);
-        auto [best_child, best_action] = root->most_visited();
+        auto [best_child, best_action] = root->soft_select();
+        std::cout << "Best action: " << game.action_map[best_action] << std::endl;
+        game.copy(PV[num_ply]);
         game.step(best_action);
-        std::cout << "Best action: " << best_action << std::endl;
         best_child->print();
         game.print();
         root->delete_rec();
     }
-}
-
-void play_game(){
-    TicTacToe game;
-    MCTSNode<TicTacToe>* root = new MCTSNode<TicTacToe>(nullptr);
-    int num_iters = 1000;
-
-    for (int num_ply = 0; num_ply < 9; num_ply += 2){
-        std::cout << "Ply: " << num_ply << std::endl;
-
-        std::cout << "Enter your move" << std::endl;
-        game.print();
-        int action;
-        std::cin >> action;
-        game.step(action);
-        
-        root->traverse(num_iters, game);
-        auto [best_child, best_action] = root->most_visited();
-        game.step(best_action);
-        best_child->make_root();
-        std::cout << "Best action: " << best_action << std::endl;
-        root->print();
-        game.print();
-        root = best_child;
+    int result = game.get_reward()[0];
+    
+    // Get the directory where the executable is located
+    std::string data_file = "../data/game_data.csv";
+    
+    // // Write header to CSV file (only once)
+    // std::ofstream file(data_file, std::ios::out); // Overwrite mode for header
+    // if (file.is_open()) {
+    //     file << "Move,GameState,Winner\n";
+    //     file.close();
+    //     std::cout << "Successfully created header in " << data_file << std::endl;
+    // } else {
+    //     std::cerr << "Error: Could not open file " << data_file << " for writing header" << std::endl;
+    //     return;
+    // }
+    
+    for (int i = 0; i < num_ply; i++){
+        // Save game to file as csv
+        std::ofstream file(data_file, std::ios::app);
+        if (file.is_open()) {
+            // file << i << ",";
+            PV[i].compact_print_to_csv(file);
+            file << ",";
+            file << result << std::endl;
+            file.close();
+        } else {
+            std::cerr << "Error: Could not open file " << data_file << " for appending move " << i << std::endl;
+        }
     }
+    std::cout << "Game data saved to " << data_file << std::endl;
 }
 
 int main(){
-    run_sim();
-    // play_game();
+    constexpr int NUM_GAMES = 10;
+    for (int i = 0; i < NUM_GAMES; i++){
+        run_sim();
+    }
 }
