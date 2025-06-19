@@ -11,21 +11,21 @@ class HF_Net{
     public:
     constexpr static int NUM_FEATURES = 15;
     double weights[NUM_FEATURES] = {
-        0.01238058,
-        -0.00597948,
-        0.09921825,
-        0.12328073,
-        -0.23779304,
-        0.19077861,
-        -4.97728920,
-        -0.15271282,
-        -0.07976994,
-        0.58472133,
-        0.08261606,
-        -0.04234111,
-        2.28158832,
-        0.00706849,
-        -0.69452399
+        0.00529924,
+        0.03955487,
+        0.10636495,
+        0.07780600,
+        -0.00434215,
+        0.03108756,
+        -0.37947142,
+        -0.00561480,
+        -0.00088456,
+        0.29646248,
+        0.04347864,
+        -0.03624544,
+        0.11984795,
+        0.02510230,
+        -0.29256809
     };
 
     double (HF_Net::*fptr[NUM_FEATURES]) (const Game& game);
@@ -60,7 +60,7 @@ class HF_Net{
         return RewardT{reward, -reward};
     }
 
-    void* fill_evals(const Game& game, double* arr){
+    void fill_evals(const Game& game, double* arr){
         for(int i = 0; i < NUM_FEATURES; i++){
             arr[i] = (this->*fptr[i])(game);
         }

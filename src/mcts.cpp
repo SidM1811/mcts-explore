@@ -6,6 +6,7 @@
 
 #include <thread>
 #include <vector>
+#include <mutex>
 
 // Include the Game class header
 #include "game_dynamics/tictactoe.hpp"
@@ -21,6 +22,7 @@
 template <typename Game>
 class MCTSNode {
     constexpr static double INF = 1e6;
+    constexpr static int MAX_CHILDREN = 16;
     public:
     using ActionT = typename Game::ActionT;
     using ActionIdxT = int;
@@ -30,20 +32,22 @@ class MCTSNode {
     using Net = HF_Net<8>;
 
     MCTSNode<Game>* parent;
-    std::vector<MCTSNode<Game>*> children;
+    MCTSNode<Game>* children[MAX_CHILDREN];
     int n_visits;
     double Q;
     bool is_expanded;
-    int num_actions, num_explored_actions;
+    int num_actions;
     PlayerType player;
 
     using AllocT = ThreadSafeBatchMalloc<MCTSNode<Game>>;
 
     static AllocT* allocator;
     static Net* hf_net;
+    static std::mutex init_mutex;
     
     // Static method to get/initialize allocator
     static AllocT* get_allocator() {
+        std::lock_guard<std::mutex> lock(init_mutex);
         if (allocator == nullptr) {
             allocator = new AllocT(10000000);
         }
@@ -51,6 +55,7 @@ class MCTSNode {
     }
 
     static Net* get_hf_net() {
+        std::lock_guard<std::mutex> lock(init_mutex);
         if (hf_net == nullptr) {
             hf_net = new Net();
         }
@@ -65,7 +70,7 @@ class MCTSNode {
         RewardT total_reward = {0, 0};
         Game rollout;
         for (int i = 0; i < num_rollouts; i++){
-            game_state.copy(rollout);
+            game_state.copy_to(rollout);
             while (!rollout.is_terminal()){
                 ActionIdxT action_idx = random_policy(rollout);
                 rollout.step(action_idx);
@@ -81,12 +86,21 @@ class MCTSNode {
 
     MCTSNode(MCTSNode* parent){
         this->parent = parent;
+        assert(parent != nullptr);
+        this->player = parent->player;
         this->n_visits = 0;
         this->Q = 0;
         this->is_expanded = false;
-        if(parent != nullptr){
-            this->player = parent->player;
-        }
+        std::fill(children, children + MAX_CHILDREN, nullptr);
+    }
+
+    MCTSNode(PlayerType player){
+        this->parent = nullptr;
+        this->n_visits = 0;
+        this->Q = 0;
+        this->is_expanded = false;
+        this->player = player;
+        std::fill(children, children + MAX_CHILDREN, nullptr);
     }
 
     void delete_rec(){
@@ -97,7 +111,7 @@ class MCTSNode {
                 }
             }
         }
-        get_allocator()->push(reinterpret_cast<MCTSNode<Game>*>(this));
+        get_allocator()->push(this);
     }
 
     void make_root(){
@@ -107,9 +121,7 @@ class MCTSNode {
     RewardT expand(Game& game_state){
         is_expanded = !game_state.is_terminal();
         num_actions = game_state.num_actions;
-        num_explored_actions = 0;
         player = game_state.get_prev_player();
-        children.resize(num_actions, nullptr);
         RewardT reward = random_rollouts(game_state, NUM_ROLLOUTS);
         return reward;
     }
@@ -123,10 +135,12 @@ class MCTSNode {
                 best_action = i;
             }
         }
+        assert(children[best_action] != nullptr);
+        assert(best_action != -1);
         return std::make_pair(children[best_action], best_action);
     }
 
-    std::pair<MCTSNode*, ActionIdxT> soft_select(){
+    std::pair<MCTSNode*, ActionIdxT> dirichlet_select(){
         std::vector<double> action_probs(num_actions, 0.0);
         double sum_probs = 0.0;
         double dirichlet_alpha = 0.3;
@@ -150,31 +164,16 @@ class MCTSNode {
         double cumulative_prob = 0.0;
         for (ActionIdxT i = 0; i < num_actions; i++){
             cumulative_prob += action_probs[i];
-            if (rand_val < cumulative_prob){
+            if (rand_val < cumulative_prob && children[i] != nullptr){
+                assert(children[i] != nullptr);
                 return std::make_pair(children[i], i);
             }
         }
-        return std::make_pair(nullptr, -1); // Should not reach here
+        // Fallback: return most visited if we reach here
+        return most_visited();
     }
 
-    std::pair<MCTSNode*, ActionIdxT> select_child(){
-        if (num_explored_actions < num_actions){
-            // Select unexplored child - should be uniform but here deterministic
-            for (ActionIdxT i = 0; i < num_actions; i++){
-                MCTSNode* child = children[i];
-                // If child is empty, set up data structure
-                if (child == nullptr){
-                    children[i] = get_allocator()->pop();
-                    new (children[i]) MCTSNode<Game>(this);
-                    child = children[i];
-                }
-                if (child->n_visits == 0){
-                    num_explored_actions++;
-                    return std::make_pair(child, i);
-                }
-            }
-        }
-
+    std::pair<MCTSNode<Game>*, ActionIdxT> ucb_select(){
         // Select child with highest UCB - simple scan
         double best_uct = -INF;
         MCTSNode<Game>* best_child = nullptr;
@@ -183,6 +182,15 @@ class MCTSNode {
         // The actions of the game state match with the MCTSNode children
         for (ActionIdxT i = 0; i < num_actions; i++){
             MCTSNode<Game>* child = children[i];
+            if(child == nullptr){
+                children[i] = get_allocator()->safe_pop();
+                assert(children[i] != nullptr);
+                new (children[i]) MCTSNode<Game>(this);
+                assert(children[i] != nullptr);
+                child = children[i];
+                return std::make_pair(child, i);
+            }
+            assert(child != nullptr);
             double uct = child->Q + sqrt(2 * log(n_visits) / child->n_visits);
             if (uct > best_uct){
                 best_uct = uct;
@@ -190,6 +198,8 @@ class MCTSNode {
                 best_action = i;
             }
         }
+        assert(best_child != nullptr);
+        assert(best_action != -1);
         return std::make_pair(best_child, best_action);
     }
     void update_recursive(RewardT result){
@@ -204,13 +214,14 @@ class MCTSNode {
         Game state;
         for (int i = 0; i < num_iters; i++){
             MCTSNode<Game>* node = this;
-            game_state.copy(state);
+            game_state.copy_to(state);
             while (node->is_expanded){
-                auto [child, action] = node->select_child();
+                auto [child, action] = node->ucb_select();
                 state.step(action);
                 node = child;
             }
             // Init Q with neural network
+            assert(player != PlayerType::Empty);
             node->Q = get_hf_net()->forward(state)[player];
             node->n_visits = 1;
             RewardT reward = node->expand(state);
@@ -222,7 +233,6 @@ class MCTSNode {
         std::cout << "Q: " << Q << std::endl;
         std::cout << "n_visits: " << n_visits << std::endl;
         std::cout << "num_actions: " << num_actions << std::endl;
-        std::cout << "num_explored_actions: " << num_explored_actions << std::endl;
         std::cout << "is_expanded: " << is_expanded << std::endl;
     }
 };
@@ -234,34 +244,38 @@ typename MCTSNode<Game>::AllocT* MCTSNode<Game>::allocator = nullptr;
 template <typename Game>
 typename MCTSNode<Game>::Net* MCTSNode<Game>::hf_net = nullptr;
 
+template <typename Game>
+std::mutex MCTSNode<Game>::init_mutex;
+
 void run_sim(){
     constexpr int BOARD_SIZE = 8;
     using Game = Connect4<BOARD_SIZE>;
     int MAX_PLY = BOARD_SIZE * BOARD_SIZE;
 
+    Game game = Game();
     Game PV[MAX_PLY];
 
-    Game game;
     int num_iters = 1000;
     int num_ply = 0;
-    MCTSNode<Game>* root = MCTSNode<Game>::get_allocator()->pop();
+
+    MCTSNode<Game>* root = nullptr;
     for (num_ply = 0; num_ply < MAX_PLY; num_ply++){
         if (root != nullptr) {
             root->delete_rec();
         }
         // Allocate memory
-        root = MCTSNode<Game>::get_allocator()->pop();
+        root = MCTSNode<Game>::get_allocator()->safe_pop();
+        assert(root != nullptr);
         // Initialize
-        new (root) MCTSNode<Game>(nullptr);
-        root->player = game.player;
+        new (root) MCTSNode<Game>(game.player);
         if(game.is_terminal()){
             break;
         }
         std::cout << "Ply: " << num_ply << std::endl;
         root->traverse(num_iters, game);
-        auto [best_child, best_action] = root->soft_select();
+        auto [best_child, best_action] = root->dirichlet_select();
         std::cout << "Best action: " << game.action_map[best_action] << std::endl;
-        game.copy(PV[num_ply]);
+        game.copy_to(PV[num_ply]);
         game.step(best_action);
         best_child->print();
         game.print();

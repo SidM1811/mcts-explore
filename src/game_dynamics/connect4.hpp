@@ -51,7 +51,7 @@ public:
         num_actions = BOARD_SIZE;
     }
 
-    Connect4 copy(Connect4& copy_game){     
+    void copy_to(Connect4& copy_game){     
         for (int i = 0; i < BOARD_SIZE; i++) {
             for (int j = 0; j < round_up(BOARD_SIZE, BOARD_REP_SIZE); j++) {
                 copy_game.state[Player0][i][j] = this->state[Player0][i][j];
@@ -68,7 +68,6 @@ public:
             copy_game.last_row[i] = this->last_row[i];
             copy_game.last_col[i] = this->last_col[i];
         }        
-        return copy_game;
     }
 
     // Mutates the object!!

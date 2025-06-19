@@ -21,6 +21,7 @@ class BatchMalloc{
     BatchMalloc<Obj>(size_t initial_request);
     Node<Obj>* allocate(size_t request_size);
     Obj* pop();
+    Obj* safe_pop();
     void push(Obj* obj);
 };
 
@@ -63,6 +64,15 @@ Obj* BatchMalloc<Obj>::pop() {
         tail = nullptr;
     }
     return reinterpret_cast<Obj*>(node_to_pop);
+}
+
+template<typename Obj>
+Obj* BatchMalloc<Obj>::safe_pop() {
+    if (head == nullptr) {
+        // If the head is null, allocate a new block
+        allocate(capacity);
+    }
+    return pop();
 }
 
 template<typename Obj>

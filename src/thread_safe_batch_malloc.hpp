@@ -33,6 +33,7 @@ class ThreadSafeBatchMalloc{
     
     // Private helper method to allocate without locking (assumes lock is held)
     TSNode<Obj>* allocate_unlocked(size_t request_size);
+    Obj* pop_unlocked();
     
     public:
     explicit ThreadSafeBatchMalloc(size_t initial_request);
@@ -48,6 +49,7 @@ class ThreadSafeBatchMalloc{
     
     TSNode<Obj>* allocate(size_t request_size);
     Obj* pop();
+    Obj* safe_pop();
     void push(Obj* obj);
     size_t get_capacity() const;
     bool empty() const;
@@ -162,21 +164,33 @@ TSNode<Obj>* ThreadSafeBatchMalloc<Obj>::allocate(size_t request_size) {
 }
 
 template<typename Obj>
-Obj* ThreadSafeBatchMalloc<Obj>::pop() {
-    std::lock_guard<std::mutex> lock(mtx);
-    
+Obj* ThreadSafeBatchMalloc<Obj>::pop_unlocked() {
     if (head == nullptr) {
         return nullptr;
     }
-    
     TSNode<Obj>* node_to_pop = head;
     head = head->next;
-    
     if (head == nullptr) {
         tail = nullptr;
     }
-    
+    assert(node_to_pop != nullptr);
     return reinterpret_cast<Obj*>(node_to_pop);
+}
+
+template<typename Obj>
+Obj* ThreadSafeBatchMalloc<Obj>::pop() {
+    std::lock_guard<std::mutex> lock(mtx);
+    return pop_unlocked();
+}
+
+template<typename Obj>
+Obj* ThreadSafeBatchMalloc<Obj>::safe_pop() {
+    std::lock_guard<std::mutex> lock(mtx);
+    if (head == nullptr) {
+        // If the head is null, allocate a new block
+        allocate_unlocked(capacity);
+    }
+    return pop_unlocked();
 }
 
 template<typename Obj>
