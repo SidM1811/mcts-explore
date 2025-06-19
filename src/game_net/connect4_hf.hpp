@@ -8,8 +8,8 @@ class HF_Net{
     using Game = Connect4<BOARD_SIZE>;
     using RewardT = typename Game::RewardT;
     using PlayerType = typename Game::PlayerType;
-    constexpr static int NUM_FEATURES = 15;
     public:
+    constexpr static int NUM_FEATURES = 15;
     double weights[NUM_FEATURES] = {
         0.1,   // open3_feature
         0.05,  // open2_feature  
@@ -27,30 +27,43 @@ class HF_Net{
         0.11,  // defensive_pattern_feature
         0.06   // endgame_feature
     };
+
+    double (HF_Net::*fptr[NUM_FEATURES]) (const Game& game);
+    
     HF_Net(){
+        fptr[0] = &HF_Net::open3_feature;
+        fptr[1] = &HF_Net::open2_feature;
+        fptr[2] = &HF_Net::threat_feature;
+        fptr[3] = &HF_Net::center_control_feature;
+        fptr[4] = &HF_Net::blocking_feature;
+        fptr[5] = &HF_Net::height_advantage_feature;
+        fptr[6] = &HF_Net::connectivity_feature;
+        fptr[7] = &HF_Net::fork_feature;
+        fptr[8] = &HF_Net::tempo_feature;
+        fptr[9] = &HF_Net::edge_avoidance_feature;
+        fptr[10] = &HF_Net::trap_feature;
+        fptr[11] = &HF_Net::mobility_feature;
+        fptr[12] = &HF_Net::structure_feature;
+        fptr[13] = &HF_Net::defensive_pattern_feature;
+        fptr[14] = &HF_Net::endgame_feature;
     }
 
     RewardT forward(const Game& game) {
         double reward = 0.0;
-        reward += open3_feature(game) * weights[0];
-        reward += open2_feature(game) * weights[1];
-        reward += threat_feature(game) * weights[2];
-        reward += center_control_feature(game) * weights[3];
-        reward += blocking_feature(game) * weights[4];
-        reward += height_advantage_feature(game) * weights[5];
-        reward += connectivity_feature(game) * weights[6];
-        reward += fork_feature(game) * weights[7];
-        reward += tempo_feature(game) * weights[8];
-        reward += edge_avoidance_feature(game) * weights[9];
-        reward += trap_feature(game) * weights[10];
-        reward += mobility_feature(game) * weights[11];
-        reward += structure_feature(game) * weights[12];
-        reward += defensive_pattern_feature(game) * weights[13];
-        reward += endgame_feature(game) * weights[14];
+
+        for(int i = 0; i < NUM_FEATURES; i++){
+            reward += (this->*fptr[i])(game) * weights[i];
+        }
 
         // Apply tanh to squash reward between -1 and 1
         reward = std::tanh(reward);
         return RewardT{reward, -reward};
+    }
+
+    void* fill_evals(const Game& game, double* arr){
+        for(int i = 0; i < NUM_FEATURES; i++){
+            arr[i] = (this->*fptr[i])(game);
+        }
     }
 
     double open3_helper(const Game& game, PlayerType check_player, int row, int col) {

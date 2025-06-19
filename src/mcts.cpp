@@ -82,8 +82,12 @@ class MCTSNode {
     }
 
     void delete_rec(){
-        for (ActionIdxT i = 0; i < num_actions; i++){
-            if(children[i] != nullptr) children[i]->delete_rec();
+        if (is_expanded) {
+            for (ActionIdxT i = 0; i < num_actions; i++){
+                if (children[i] != nullptr) {
+                    children[i]->delete_rec();
+                }
+            }
         }
         get_allocator()->push(reinterpret_cast<MCTSNode<Game>*>(this));
     }
@@ -232,8 +236,14 @@ void run_sim(){
     Game game;
     int num_iters = 100000;
     int num_ply = 0;
+    MCTSNode<Game>* root = MCTSNode<Game>::get_allocator()->pop();
     for (num_ply = 0; num_ply < MAX_PLY; num_ply++){
-        MCTSNode<Game>* root = MCTSNode<Game>::get_allocator()->pop();
+        if (root != nullptr) {
+            root->delete_rec();
+        }
+        // Allocate memory
+        root = MCTSNode<Game>::get_allocator()->pop();
+        // Initialize
         new (root) MCTSNode<Game>(nullptr);
         root->player = game.player;
         if(game.is_terminal()){
@@ -247,31 +257,22 @@ void run_sim(){
         game.step(best_action);
         best_child->print();
         game.print();
-        root->delete_rec();
     }
     int result = game.get_reward()[0];
     
     // Get the directory where the executable is located
     std::string data_file = "../data/game_data.csv";
-    
-    // // Write header to CSV file (only once)
-    // std::ofstream file(data_file, std::ios::out); // Overwrite mode for header
-    // if (file.is_open()) {
-    //     file << "Move,GameState,Winner\n";
-    //     file.close();
-    //     std::cout << "Successfully created header in " << data_file << std::endl;
-    // } else {
-    //     std::cerr << "Error: Could not open file " << data_file << " for writing header" << std::endl;
-    //     return;
-    // }
+
+    double evals[MCTSNode<Game>::Net::NUM_FEATURES];
     
     for (int i = 0; i < num_ply; i++){
         // Save game to file as csv
         std::ofstream file(data_file, std::ios::app);
         if (file.is_open()) {
-            // file << i << ",";
-            PV[i].compact_print_to_csv(file);
-            file << ",";
+            root->get_hf_net()->fill_evals(PV[i], evals);
+            for (int j = 0; j < MCTSNode<Game>::Net::NUM_FEATURES; j++){
+                file << evals[j] << ",";
+            }
             file << result << std::endl;
             file.close();
         } else {
@@ -279,6 +280,7 @@ void run_sim(){
         }
     }
     std::cout << "Game data saved to " << data_file << std::endl;
+    if(root != nullptr) root->delete_rec();
 }
 
 int main(){
