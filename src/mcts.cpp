@@ -4,10 +4,16 @@
 #include <iostream>
 #include <fstream>
 
+#include <thread>
+#include <vector>
+
 // Include the Game class header
 #include "game_dynamics/tictactoe.hpp"
 #include "game_dynamics/connect4.hpp"
+
 #include "batch_malloc.hpp"
+#include "thread_safe_batch_malloc.hpp"
+
 #include "game_net/connect4_hf.hpp"
 
 #define NUM_ROLLOUTS 10
@@ -31,13 +37,15 @@ class MCTSNode {
     int num_actions, num_explored_actions;
     PlayerType player;
 
-    static BatchMalloc<MCTSNode<Game>>* allocator;
+    using AllocT = ThreadSafeBatchMalloc<MCTSNode<Game>>;
+
+    static AllocT* allocator;
     static Net* hf_net;
     
     // Static method to get/initialize allocator
-    static BatchMalloc<MCTSNode<Game>>* get_allocator() {
+    static AllocT* get_allocator() {
         if (allocator == nullptr) {
-            allocator = new BatchMalloc<MCTSNode<Game>>(100000);
+            allocator = new AllocT(10000000);
         }
         return allocator;
     }
@@ -221,7 +229,7 @@ class MCTSNode {
 
 // Static member definitions
 template <typename Game>
-BatchMalloc<MCTSNode<Game>>* MCTSNode<Game>::allocator = nullptr;
+typename MCTSNode<Game>::AllocT* MCTSNode<Game>::allocator = nullptr;
 
 template <typename Game>
 typename MCTSNode<Game>::Net* MCTSNode<Game>::hf_net = nullptr;
@@ -284,8 +292,22 @@ void run_sim(){
 }
 
 int main(){
-    constexpr int NUM_GAMES = 10;
-    for (int i = 0; i < NUM_GAMES; i++){
-        run_sim();
+    constexpr int NUM_GAMES = 8;
+    constexpr int NUM_CORES = 8;
+    
+    std::vector<std::thread> threads;
+    
+    for (int core = 0; core < NUM_CORES; core++) {
+        threads.emplace_back([core]() {
+            // Run games on this core
+            for (int i = core; i < NUM_GAMES; i += NUM_CORES) {
+                run_sim();
+            }
+        });
+    }
+    
+    // Wait for all threads to complete
+    for (auto& thread : threads) {
+        thread.join();
     }
 }

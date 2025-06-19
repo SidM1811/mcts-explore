@@ -4,6 +4,7 @@
 #include <vector>
 #include <map>
 #include <array>
+#include <cassert>
 
 class TicTacToe {
 public:
