@@ -292,8 +292,8 @@ void run_sim(){
 }
 
 int main(){
-    constexpr int NUM_GAMES = 8;
-    constexpr int NUM_CORES = 8;
+    constexpr int NUM_CORES = 20;
+    constexpr int NUM_GAMES = 10 * NUM_CORES;
     
     std::vector<std::thread> threads;
     

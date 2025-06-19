@@ -4,7 +4,7 @@
 CC = g++
 
 # Compiler flags
-CFLAGS = -Wall -g -std=c++17
+CFLAGS = -Wall -g -std=c++17 -pthread
 
 # Source files
 SRC_DIR = ../src

@@ -6,11 +6,20 @@
 #include <memory>
 #include <vector>
 
+#define CACHE_LINE_SIZE 64
+
 template<typename Obj>
-class TSNode{
+class alignas(CACHE_LINE_SIZE) TSNode{
     public:
     Obj object;
     TSNode<Obj>* next;
+    
+    private:
+    // Padding to ensure the entire TSNode fits within cache line boundaries
+    // and prevent false sharing between adjacent nodes
+    static constexpr size_t USED_SIZE = sizeof(Obj) + sizeof(TSNode<Obj>*);
+    static constexpr size_t PADDING_SIZE = (CACHE_LINE_SIZE - (USED_SIZE % CACHE_LINE_SIZE)) % CACHE_LINE_SIZE;
+    char padding[PADDING_SIZE];
 };
 
 template<typename Obj>
@@ -116,7 +125,9 @@ TSNode<Obj>* ThreadSafeBatchMalloc<Obj>::allocate_unlocked(size_t request_size) 
         return nullptr;
     }
     
-    TSNode<Obj>* new_block = static_cast<TSNode<Obj>*>(malloc(sizeof(TSNode<Obj>) * request_size));
+    // Use aligned allocation to ensure cache line alignment
+    size_t allocation_size = sizeof(TSNode<Obj>) * request_size;
+    TSNode<Obj>* new_block = static_cast<TSNode<Obj>*>(aligned_alloc(CACHE_LINE_SIZE, allocation_size));
     if (!new_block) {
         return nullptr; // Allocation failed
     }
