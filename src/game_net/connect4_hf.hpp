@@ -11,21 +11,21 @@ class HF_Net{
     public:
     constexpr static int NUM_FEATURES = 15;
     double weights[NUM_FEATURES] = {
-        0.10858329,  // open3_feature
-        -0.18055145, // open2_feature  
-        0.06845932,  // threat_feature
-        -0.79264534, // center_control_feature
-        0.69425035,  // blocking_feature
-        0.41958296,  // height_advantage_feature
-        -0.15130317, // connectivity_feature
-        0.01322918,  // fork_feature
-        0.026346,    // tempo_feature
-        -1.7461168,  // edge_avoidance_feature
-        -0.0298743,  // trap_feature
-        -0.9726522,  // mobility_feature
-        0.1745469,   // structure_feature
-        -0.02562008, // defensive_pattern_feature
-        1.2571691    // endgame_feature
+        0.01238058,
+        -0.00597948,
+        0.09921825,
+        0.12328073,
+        -0.23779304,
+        0.19077861,
+        -4.97728920,
+        -0.15271282,
+        -0.07976994,
+        0.58472133,
+        0.08261606,
+        -0.04234111,
+        2.28158832,
+        0.00706849,
+        -0.69452399
     };
 
     double (HF_Net::*fptr[NUM_FEATURES]) (const Game& game);

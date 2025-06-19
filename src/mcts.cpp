@@ -242,7 +242,7 @@ void run_sim(){
     Game PV[MAX_PLY];
 
     Game game;
-    int num_iters = 100000;
+    int num_iters = 1000;
     int num_ply = 0;
     MCTSNode<Game>* root = MCTSNode<Game>::get_allocator()->pop();
     for (num_ply = 0; num_ply < MAX_PLY; num_ply++){
